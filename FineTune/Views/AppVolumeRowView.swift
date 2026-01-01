@@ -34,8 +34,8 @@ struct AppVolumeRowView: View {
                     onVolumeChange(gain)
                 }
 
-            // Show linear percentage (0-200%)
-            Text("\(VolumeMapping.gainToPercentage(VolumeMapping.sliderToGain(sliderValue)))%")
+            // Show linear percentage (0-200%) matching slider position
+            Text("\(Int(sliderValue * 200))%")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(width: 45, alignment: .trailing)
