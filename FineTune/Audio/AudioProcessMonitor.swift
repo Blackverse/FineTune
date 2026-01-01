@@ -7,6 +7,7 @@ import os
 @MainActor
 final class AudioProcessMonitor {
     private(set) var activeApps: [AudioApp] = []
+    var onAppsChanged: (([AudioApp]) -> Void)?
 
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "FineTune", category: "AudioProcessMonitor")
 
@@ -93,6 +94,7 @@ final class AudioProcessMonitor {
             updateProcessListeners(for: processIDs)
 
             activeApps = apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            onAppsChanged?(activeApps)
 
         } catch {
             logger.error("Failed to refresh process list: \(error.localizedDescription)")
