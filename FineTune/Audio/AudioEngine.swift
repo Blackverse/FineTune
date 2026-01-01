@@ -68,24 +68,17 @@ final class AudioEngine {
     }
 
     private func applyVolumeToTap(for app: AudioApp, volume: Float) {
-        if volume >= 1.0 {
-            if let tap = taps.removeValue(forKey: app.id) {
-                tap.invalidate()
-                logger.debug("Removed tap for \(app.name) (volume at 100%)")
-            }
+        if let existingTap = taps[app.id] {
+            existingTap.volume = volume
         } else {
-            if let existingTap = taps[app.id] {
-                existingTap.volume = volume
-            } else {
-                let tap = ProcessTapController(app: app)
-                tap.volume = volume
-                do {
-                    try tap.activate()
-                    taps[app.id] = tap
-                    logger.debug("Created tap for \(app.name) at \(Int(volume * 100))%")
-                } catch {
-                    logger.error("Failed to create tap for \(app.name): \(error.localizedDescription)")
-                }
+            let tap = ProcessTapController(app: app)
+            tap.volume = volume
+            do {
+                try tap.activate()
+                taps[app.id] = tap
+                logger.debug("Created tap for \(app.name) at \(Int(volume * 100))%")
+            } catch {
+                logger.error("Failed to create tap for \(app.name): \(error.localizedDescription)")
             }
         }
     }
