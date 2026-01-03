@@ -233,35 +233,52 @@ final class ProcessTapController {
     private func performCrossfadeSwitch(to newOutputUID: String) async throws {
         logger.info("[CROSSFADE] Step 1: Reading device volumes for compensation")
 
-        // Read source device volume (need to find the physical device behind our aggregate)
+        // Read source device volume and sample rate
         var sourceVolume: Float = 1.0
+        var sourceSampleRate: Float64 = 0
         if let sourceUID = currentDeviceUID {
             do {
                 let devices = try AudioObjectID.readDeviceList()
                 if let sourceDevice = devices.first(where: { (try? $0.readDeviceUID()) == sourceUID }) {
                     sourceVolume = sourceDevice.readOutputVolumeScalar()
-                    logger.debug("[CROSSFADE] Source device volume: \(sourceVolume)")
+                    sourceSampleRate = (try? sourceDevice.readNominalSampleRate()) ?? 0
+                    logger.debug("[CROSSFADE] Source device: volume=\(sourceVolume), sampleRate=\(sourceSampleRate)Hz")
                 }
             } catch {
-                logger.warning("[CROSSFADE] Failed to read source volume: \(error.localizedDescription)")
+                logger.warning("[CROSSFADE] Failed to read source device properties: \(error.localizedDescription)")
             }
         }
 
-        // Read destination device volume
+        // Read destination device volume and sample rate
         var destVolume: Float = 1.0
+        var destSampleRate: Float64 = 0
         do {
             let devices = try AudioObjectID.readDeviceList()
             if let destDevice = devices.first(where: { (try? $0.readDeviceUID()) == newOutputUID }) {
                 destVolume = destDevice.readOutputVolumeScalar()
-                logger.debug("[CROSSFADE] Destination device volume: \(destVolume)")
+                destSampleRate = (try? destDevice.readNominalSampleRate()) ?? 0
+                logger.debug("[CROSSFADE] Destination device: volume=\(destVolume), sampleRate=\(destSampleRate)Hz")
             }
         } catch {
-            logger.warning("[CROSSFADE] Failed to read destination volume: \(error.localizedDescription)")
+            logger.warning("[CROSSFADE] Failed to read destination device properties: \(error.localizedDescription)")
+        }
+
+        // Log sample rate mismatch but proceed with crossfade anyway
+        // Crossfade is better than destructive switch because:
+        // - Secondary tap is created BEFORE primary is destroyed
+        // - No gap where audio leaks to system default output
+        if sourceSampleRate > 0 && destSampleRate > 0 && sourceSampleRate != destSampleRate {
+            logger.info("[CROSSFADE] Sample rate mismatch: source=\(sourceSampleRate)Hz, dest=\(destSampleRate)Hz - proceeding anyway (avoids audio leak)")
         }
 
         // Calculate compensation: source/dest to maintain perceived loudness
-        let compensation = destVolume > 0.001 ? sourceVolume / destVolume : 1.0
+        // Clamp to ±20dB range (0.1 to 10.0) to prevent extreme values
+        let rawCompensation = destVolume > 0.001 ? sourceVolume / destVolume : 1.0
+        let compensation = min(max(rawCompensation, 0.1), 10.0)
         _deviceVolumeCompensation = compensation
+        if rawCompensation != compensation {
+            logger.warning("[CROSSFADE] Compensation clamped from \(rawCompensation) to \(compensation)")
+        }
         logger.info("[CROSSFADE] Volume compensation: \(compensation) (source=\(sourceVolume), dest=\(destVolume))")
 
         logger.info("[CROSSFADE] Step 2: Preparing crossfade state")
@@ -437,6 +454,7 @@ final class ProcessTapController {
         _secondaryCurrentVolume = 0
 
         // Reset crossfade state for next switch
+        _crossfadeProgress = 0  // CRITICAL: Reset so new primary doesn't stay silent
         _secondarySampleCount = 0
         _crossfadeTotalSamples = 0
 
@@ -450,6 +468,36 @@ final class ProcessTapController {
     /// Fallback: Switches using destroy/recreate approach.
     private func performDestructiveDeviceSwitch(to newDeviceUID: String?, tapDesc: CATapDescription) async throws {
         let originalVolume = _volume
+
+        // Compute volume compensation (same logic as crossfade path)
+        let newOutputUID: String
+        if let targetUID = newDeviceUID {
+            newOutputUID = targetUID
+        } else {
+            let systemOutputID = try AudioDeviceID.readDefaultSystemOutputDevice()
+            newOutputUID = try systemOutputID.readDeviceUID()
+        }
+
+        var sourceVolume: Float = 1.0
+        var destVolume: Float = 1.0
+
+        if let sourceUID = currentDeviceUID {
+            do {
+                let devices = try AudioObjectID.readDeviceList()
+                if let sourceDevice = devices.first(where: { (try? $0.readDeviceUID()) == sourceUID }) {
+                    sourceVolume = sourceDevice.readOutputVolumeScalar()
+                }
+                if let destDevice = devices.first(where: { (try? $0.readDeviceUID()) == newOutputUID }) {
+                    destVolume = destDevice.readOutputVolumeScalar()
+                }
+            } catch {
+                logger.warning("[SWITCH-DESTROY] Failed to read device volumes: \(error.localizedDescription)")
+            }
+        }
+
+        let compensation = destVolume > 0.001 ? sourceVolume / destVolume : 1.0
+        _deviceVolumeCompensation = min(max(compensation, 0.1), 10.0)
+        logger.info("[SWITCH-DESTROY] Volume compensation: \(self._deviceVolumeCompensation) (source=\(sourceVolume), dest=\(destVolume))")
 
         _forceSilence = true
         logger.info("[SWITCH-DESTROY] Enabled _forceSilence=true")
@@ -475,19 +523,9 @@ final class ProcessTapController {
     }
 
     /// Internal destroy/recreate switch (used as fallback).
+    /// Creates new tap+aggregate BEFORE destroying old to prevent audio leak to system default.
     private func performDeviceSwitch(to newDeviceUID: String?, tapDesc: CATapDescription) throws {
-        // Stop and destroy current
-        if aggregateDeviceID.isValid {
-            AudioDeviceStop(aggregateDeviceID, deviceProcID)
-            if let procID = deviceProcID {
-                AudioDeviceDestroyIOProcID(aggregateDeviceID, procID)
-                deviceProcID = nil
-            }
-            AudioHardwareDestroyAggregateDevice(aggregateDeviceID)
-            aggregateDeviceID = .unknown
-        }
-
-        // Resolve output UID
+        // Resolve output UID first
         let outputUID: String
         if let targetUID = newDeviceUID {
             outputUID = targetUID
@@ -496,10 +534,19 @@ final class ProcessTapController {
             outputUID = try systemOutputID.readDeviceUID()
         }
 
-        targetDeviceUID = newDeviceUID
-        currentDeviceUID = outputUID
+        // STEP 1: Create NEW tap (process will be muted by BOTH old and new taps)
+        let newTapDesc = CATapDescription(stereoMixdownOfProcesses: [app.objectID])
+        newTapDesc.uuid = UUID()
+        newTapDesc.muteBehavior = .mutedWhenTapped
 
-        // Create new aggregate with same tap
+        var newTapID: AudioObjectID = .unknown
+        var err = AudioHardwareCreateProcessTap(newTapDesc, &newTapID)
+        guard err == noErr else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(err),
+                          userInfo: [NSLocalizedDescriptionKey: "Failed to create new tap: \(err)"])
+        }
+
+        // STEP 2: Create new aggregate with the new tap
         let aggregateUID = UUID().uuidString
         let description: [String: Any] = [
             kAudioAggregateDeviceNameKey: "FineTune-\(app.id)",
@@ -514,37 +561,67 @@ final class ProcessTapController {
             kAudioAggregateDeviceTapListKey: [
                 [
                     kAudioSubTapDriftCompensationKey: true,
-                    kAudioSubTapUIDKey: tapDesc.uuid.uuidString
+                    kAudioSubTapUIDKey: newTapDesc.uuid.uuidString
                 ]
             ]
         ]
 
-        var err = AudioHardwareCreateAggregateDevice(description as CFDictionary, &aggregateDeviceID)
+        var newAggregateID: AudioObjectID = .unknown
+        err = AudioHardwareCreateAggregateDevice(description as CFDictionary, &newAggregateID)
         guard err == noErr else {
+            // Cleanup tap on failure
+            AudioHardwareDestroyProcessTap(newTapID)
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err),
                           userInfo: [NSLocalizedDescriptionKey: "Failed to create aggregate: \(err)"])
         }
 
-        // Update ramp coefficient
-        if let deviceSampleRate = try? aggregateDeviceID.readNominalSampleRate() {
-            rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * 0.030))
-        }
-
-        // Create IO proc
-        err = AudioDeviceCreateIOProcIDWithBlock(&deviceProcID, aggregateDeviceID, queue) { [weak self] _, inInputData, _, outOutputData, _ in
+        // STEP 3: Create and start IO proc for new aggregate
+        var newDeviceProcID: AudioDeviceIOProcID?
+        err = AudioDeviceCreateIOProcIDWithBlock(&newDeviceProcID, newAggregateID, queue) { [weak self] _, inInputData, _, outOutputData, _ in
             guard let self else { return }
             self.processAudio(inInputData, to: outOutputData)
         }
         guard err == noErr else {
+            AudioHardwareDestroyAggregateDevice(newAggregateID)
+            AudioHardwareDestroyProcessTap(newTapID)
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err),
                           userInfo: [NSLocalizedDescriptionKey: "Failed to create IO proc: \(err)"])
         }
 
-        // Start device
-        err = AudioDeviceStart(aggregateDeviceID, deviceProcID)
+        err = AudioDeviceStart(newAggregateID, newDeviceProcID)
         guard err == noErr else {
+            if let procID = newDeviceProcID {
+                AudioDeviceDestroyIOProcID(newAggregateID, procID)
+            }
+            AudioHardwareDestroyAggregateDevice(newAggregateID)
+            AudioHardwareDestroyProcessTap(newTapID)
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(err),
                           userInfo: [NSLocalizedDescriptionKey: "Failed to start device: \(err)"])
+        }
+
+        // STEP 4: NOW destroy old tap + aggregate (process still muted by new tap)
+        if aggregateDeviceID.isValid {
+            AudioDeviceStop(aggregateDeviceID, deviceProcID)
+            if let procID = deviceProcID {
+                AudioDeviceDestroyIOProcID(aggregateDeviceID, procID)
+            }
+            AudioHardwareDestroyAggregateDevice(aggregateDeviceID)
+        }
+        if processTapID.isValid {
+            AudioHardwareDestroyProcessTap(processTapID)
+        }
+
+        // STEP 5: Promote new to primary
+        processTapID = newTapID
+        tapDescription = newTapDesc
+        aggregateDeviceID = newAggregateID
+        deviceProcID = newDeviceProcID
+        targetDeviceUID = newDeviceUID
+        currentDeviceUID = outputUID
+
+        // Update ramp coefficient for new device
+        if let deviceSampleRate = try? aggregateDeviceID.readNominalSampleRate() {
+            rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * 0.030))
         }
     }
 
@@ -579,9 +656,17 @@ final class ProcessTapController {
 
         // During crossfade, primary tap fades OUT using equal-power curve
         // cos(0) = 1.0, cos(π/2) = 0.0
-        let crossfadeMultiplier: Float = _isCrossfading
-            ? cos(_crossfadeProgress * .pi / 2.0)
-            : 1.0
+        // CRITICAL: Also stay silent when progress >= 1.0 even if _isCrossfading is false,
+        // to prevent race condition pop between setting flag and destroying tap
+        let crossfadeMultiplier: Float
+        if _isCrossfading {
+            crossfadeMultiplier = cos(_crossfadeProgress * .pi / 2.0)
+        } else if _crossfadeProgress >= 1.0 {
+            // Crossfade completed but tap not yet destroyed - stay silent
+            crossfadeMultiplier = 0.0
+        } else {
+            crossfadeMultiplier = 1.0
+        }
 
         let inputBuffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inputBufferList))
 
@@ -598,8 +683,11 @@ final class ProcessTapController {
                 // Per-sample volume ramping (one-pole lowpass)
                 currentVol += (targetVol - currentVol) * rampCoefficient
 
-                // Apply gain with crossfade multiplier and device volume compensation
-                var sample = inputSamples[i] * currentVol * crossfadeMultiplier * _deviceVolumeCompensation
+                // Apply gain with crossfade multiplier
+                // During crossfade, DON'T apply compensation to primary (it's on old device)
+                // Compensation is only correct for the new device (secondary tap)
+                let effectiveCompensation: Float = _isCrossfading ? 1.0 : _deviceVolumeCompensation
+                var sample = inputSamples[i] * currentVol * crossfadeMultiplier * effectiveCompensation
 
                 // Soft-knee limiter (prevents harsh clipping when boosting)
                 sample = softLimit(sample)
