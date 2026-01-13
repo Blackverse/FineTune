@@ -80,6 +80,50 @@ final class EQProcessor: @unchecked Sendable {
         memset(delayBufferR, 0, Self.delayBufferSize * MemoryLayout<Float>.size)
     }
 
+    /// Updates the sample rate and recalculates all biquad coefficients.
+    /// Call this when the output device changes to a different sample rate.
+    /// Thread-safe: uses atomic swap for RT-safety.
+    ///
+    /// - Parameter newRate: The new device sample rate in Hz (e.g., 44100, 48000, 96000)
+    func updateSampleRate(_ newRate: Double) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard newRate != sampleRate else { return }  // No change needed
+        guard let settings = _currentSettings else {
+            // No settings applied yet, just update the rate for future use
+            sampleRate = newRate
+            return
+        }
+
+        // Update stored rate
+        sampleRate = newRate
+
+        // Recalculate coefficients with new sample rate
+        let coefficients = BiquadMath.coefficientsForAllBands(
+            gains: settings.clampedGains,
+            sampleRate: newRate
+        )
+
+        // Create new biquad setup
+        let newSetup = coefficients.withUnsafeBufferPointer { ptr in
+            vDSP_biquad_CreateSetup(ptr.baseAddress!, vDSP_Length(EQSettings.bandCount))
+        }
+
+        // Atomic swap (RT-safe)
+        let oldSetup = _eqSetup
+        _eqSetup = newSetup
+
+        // Destroy old setup asynchronously (avoid blocking)
+        if let old = oldSetup {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.2) {
+                vDSP_biquad_DestroySetup(old)
+            }
+        }
+
+        // Reset delay buffers to avoid filter artifacts from old state
+        memset(delayBufferL, 0, Self.delayBufferSize * MemoryLayout<Float>.size)
+        memset(delayBufferR, 0, Self.delayBufferSize * MemoryLayout<Float>.size)
+    }
+
     /// Process stereo interleaved audio (RT-safe)
     /// - Parameters:
     ///   - input: Input buffer (stereo interleaved Float32)
