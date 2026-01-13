@@ -8,37 +8,18 @@ struct EQPanelView: View {
 
     private let frequencyLabels = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
 
+    private var currentPreset: EQPreset? {
+        EQPreset.allCases.first { preset in
+            preset.settings.bandGains == settings.bandGains
+        }
+    }
+
     var body: some View {
-        VStack(spacing: 8) {
-            // Header: Preset picker + Bypass toggle
+        VStack(spacing: 10) {
+            // Header: Toggle left, Preset right
             HStack {
-                Menu {
-                    ForEach(EQPreset.allCases) { preset in
-                        Button(preset.name) {
-                            onPresetSelected(preset)
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("Preset")
-                            .font(.system(size: 11))
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 8))
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(4)
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-
-                Spacer()
-
+                // EQ toggle on left
                 HStack(spacing: 4) {
-                    Text("EQ")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
                     Toggle("", isOn: $settings.isEnabled)
                         .toggleStyle(.switch)
                         .scaleEffect(0.65)
@@ -46,11 +27,29 @@ struct EQPanelView: View {
                         .onChange(of: settings.isEnabled) { _, _ in
                             onSettingsChanged(settings)
                         }
+                    Text("EQ")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                // Preset picker on right
+                HStack(spacing: DesignTokens.Spacing.sm) {
+                    Text("Preset")
+                        .font(DesignTokens.Typography.pickerText)
+                        .foregroundColor(DesignTokens.Colors.textSecondary)
+
+                    EQPresetPicker(
+                        selectedPreset: currentPreset,
+                        onPresetSelected: onPresetSelected
+                    )
                 }
             }
+            .zIndex(1)  // Ensure dropdown renders above sliders
 
-            // 10-band sliders
-            HStack(spacing: 2) {
+            // 10-band sliders - taller with more spacing
+            HStack(spacing: 22) {
                 ForEach(0..<10, id: \.self) { index in
                     EQSliderView(
                         frequency: frequencyLabels[index],
@@ -62,14 +61,16 @@ struct EQPanelView: View {
                             }
                         )
                     )
-                    .frame(width: 24, height: 70)
+                    .frame(width: 26, height: 100)
                 }
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.5))
-        .cornerRadius(8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.5))
+        )
     }
 }
 
@@ -79,6 +80,7 @@ struct EQPanelView: View {
         onPresetSelected: { _ in },
         onSettingsChanged: { _ in }
     )
-    .frame(width: 300)
+    .frame(width: 320)
     .padding()
+    .background(Color.black)
 }

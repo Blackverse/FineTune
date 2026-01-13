@@ -28,8 +28,8 @@ struct AppRow: View {
     /// Default volume to restore when unmuting from 0 (50% = unity gain)
     private let defaultUnmuteVolume: Double = 0.5
 
-    /// Fixed height for EQ panel (header ~24 + sliders 70 + padding 20 + top margin 8)
-    private let eqPanelHeight: CGFloat = 130
+    /// Fixed height for EQ panel (header ~24 + spacing 10 + sliders 100 + padding 20 + top margin 8)
+    private let eqPanelHeight: CGFloat = 165
 
     init(
         app: AudioApp,
@@ -158,7 +158,6 @@ struct AppRow: View {
             )
             .padding(.top, DesignTokens.Spacing.sm)
             .frame(height: isEQExpanded ? eqPanelHeight : 0, alignment: .top)
-            .clipped()
             .opacity(isEQExpanded ? 1 : 0)
             .allowsHitTesting(isEQExpanded)
         }

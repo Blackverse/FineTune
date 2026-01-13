@@ -6,73 +6,111 @@ struct EQSliderView: View {
     @Binding var gain: Float
     let range: ClosedRange<Float> = -12...12
 
+    // Local state for smooth visual updates
+    @State private var localGain: Float = 0
+
+    private let trackWidth: CGFloat = 4
+    private let thumbSize: CGFloat = 14
+    private let tickCount = 5  // Number of tick marks (fewer = cleaner)
+    private let tickWidth: CGFloat = 3
+    private let tickGap: CGFloat = 3  // Gap between tick and track
+    private let verticalPadding: CGFloat = 8  // Margin at top/bottom for thumb travel
+
     var body: some View {
         VStack(spacing: 4) {
-            // Vertical slider
             GeometryReader { geo in
-                ZStack(alignment: .center) {
-                    // Track background
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.secondary.opacity(0.2))
-                        .frame(width: 4)
+                // Thumb travels within padded range
+                let travelHeight = geo.size.height - (verticalPadding * 2)
+                let normalizedGain = CGFloat((localGain - range.lowerBound) / (range.upperBound - range.lowerBound))
+                let thumbY = verticalPadding + travelHeight * (1 - normalizedGain)
 
-                    // Center line (0 dB marker)
-                    Rectangle()
-                        .fill(Color.secondary.opacity(0.4))
-                        .frame(width: 8, height: 1)
-
-                    // Fill from center
-                    let normalizedGain = CGFloat((gain - range.lowerBound) / (range.upperBound - range.lowerBound))
-                    let centerY = geo.size.height / 2
-                    let thumbY = geo.size.height * (1 - normalizedGain)
-
-                    if gain != 0 {
-                        let fillHeight = abs(thumbY - centerY)
-                        let fillY = gain > 0 ? (thumbY + centerY) / 2 : (centerY + thumbY) / 2
-
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(Color.accentColor)
-                            .frame(width: 4, height: fillHeight)
-                            .position(x: geo.size.width / 2, y: fillY)
-                    }
-
-                    // Thumb
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 12, height: 12)
-                        .shadow(color: .black.opacity(0.2), radius: 1, y: 1)
-                        .position(x: geo.size.width / 2, y: thumbY)
-                        .gesture(
-                            DragGesture(minimumDistance: 0)
-                                .onChanged { value in
-                                    let normalized = 1 - (value.location.y / geo.size.height)
-                                    let clamped = min(max(normalized, 0), 1)
-                                    gain = Float(clamped) * (range.upperBound - range.lowerBound) + range.lowerBound
+                Color.clear
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                // Map touch to padded range
+                                let normalizedY = (value.location.y - verticalPadding) / travelHeight
+                                let normalized = 1 - normalizedY
+                                let clamped = min(max(normalized, 0), 1)
+                                let newGain = Float(clamped) * (range.upperBound - range.lowerBound) + range.lowerBound
+                                localGain = newGain
+                                gain = newGain
+                            }
+                    )
+                    .overlay {
+                        // All visuals - no hit testing
+                        ZStack {
+                            // Tick marks on LEFT side
+                            VStack(spacing: 0) {
+                                ForEach(0..<tickCount, id: \.self) { index in
+                                    if index > 0 { Spacer() }
+                                    Rectangle()
+                                        .fill(Color.secondary.opacity(0.25))
+                                        .frame(width: tickWidth, height: 1)
                                 }
-                        )
-                }
-                .frame(maxWidth: .infinity)
+                            }
+                            .frame(height: travelHeight)
+                            .offset(x: -(trackWidth / 2 + tickGap + tickWidth / 2))
+
+                            // Tick marks on RIGHT side
+                            VStack(spacing: 0) {
+                                ForEach(0..<tickCount, id: \.self) { index in
+                                    if index > 0 { Spacer() }
+                                    Rectangle()
+                                        .fill(Color.secondary.opacity(0.25))
+                                        .frame(width: tickWidth, height: 1)
+                                }
+                            }
+                            .frame(height: travelHeight)
+                            .offset(x: trackWidth / 2 + tickGap + tickWidth / 2)
+
+                            // Track (full height)
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Color.secondary.opacity(0.3))
+                                .frame(width: trackWidth)
+
+                            // Center line (0 dB marker) - spans across ticks
+                            Rectangle()
+                                .fill(Color.secondary.opacity(0.4))
+                                .frame(width: trackWidth + (tickGap + tickWidth) * 2, height: 1)
+
+                            // Thumb
+                            ZStack {
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: thumbSize, height: thumbSize)
+                                Circle()
+                                    .fill(Color(white: 0.15))
+                                    .frame(width: 5, height: 5)
+                            }
+                            .shadow(color: .black.opacity(0.5), radius: 2, y: 1)
+                            .position(x: geo.size.width / 2, y: thumbY)
+                        }
+                        .allowsHitTesting(false)
+                    }
             }
 
-            // Frequency label
             Text(frequency)
                 .font(.system(size: 9, weight: .medium))
                 .foregroundColor(.secondary)
         }
-        .onTapGesture(count: 2) {
-            withAnimation(.easeInOut(duration: 0.15)) {
-                gain = 0  // Double-tap to reset
-            }
+        .onAppear {
+            localGain = gain  // Initialize from binding
+        }
+        .onChange(of: gain) { _, newValue in
+            localGain = newValue  // Sync from external changes
         }
     }
 }
 
 #Preview {
-    HStack(spacing: 4) {
+    HStack(spacing: 8) {
         EQSliderView(frequency: "31", gain: .constant(6))
         EQSliderView(frequency: "1k", gain: .constant(0))
         EQSliderView(frequency: "16k", gain: .constant(-6))
     }
-    .frame(width: 100, height: 100)
+    .frame(width: 120, height: 120)
     .padding()
+    .background(Color.black)
 }
