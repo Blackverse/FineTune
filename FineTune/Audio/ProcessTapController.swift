@@ -332,15 +332,9 @@ final class ProcessTapController {
             logger.info("[CROSSFADE] Sample rate mismatch: source=\(sourceSampleRate)Hz, dest=\(destSampleRate)Hz - proceeding anyway (avoids audio leak)")
         }
 
-        // Calculate compensation: source/dest to maintain perceived loudness
-        // Clamp to ±20dB range (0.1 to 10.0) to prevent extreme values
-        let rawCompensation = destVolume > 0.001 ? sourceVolume / destVolume : 1.0
-        let compensation = min(max(rawCompensation, 0.1), 10.0)
-        _deviceVolumeCompensation = compensation
-        if rawCompensation != compensation {
-            logger.warning("[CROSSFADE] Compensation clamped from \(rawCompensation) to \(compensation)")
-        }
-        logger.info("[CROSSFADE] Volume compensation: \(compensation) (source=\(sourceVolume), dest=\(destVolume))")
+        // Device volume compensation disabled - causes cumulative attenuation on round-trip switches
+        // Keep compensation at 1.0 so slider directly controls output volume
+        logger.info("[CROSSFADE] Device volumes: source=\(sourceVolume), dest=\(destVolume) (no compensation applied)")
 
         logger.info("[CROSSFADE] Step 2: Preparing crossfade state")
 
@@ -383,10 +377,14 @@ final class ProcessTapController {
 
         // Crossfade complete - destroy primary, promote secondary
         logger.info("[CROSSFADE] Crossfade complete, promoting secondary")
-        _isCrossfading = false
 
         destroyPrimaryTap()
         promoteSecondaryToPrimary()
+
+        // Set _isCrossfading = false AFTER promotion to avoid race condition:
+        // Callback checks _isCrossfading, and if false, uses eqProcessor.
+        // eqProcessor must already be the promoted one when this happens.
+        _isCrossfading = false
 
         logger.info("[CROSSFADE] Complete")
     }
@@ -513,10 +511,14 @@ final class ProcessTapController {
         deviceProcID = secondaryDeviceProcID
         tapDescription = secondaryTapDescription
 
-        // Update ramp coefficient and EQ coefficients for new device sample rate
+        // Update ramp coefficient for new device sample rate
         if let deviceSampleRate = try? aggregateDeviceID.readNominalSampleRate() {
             let rampTimeSeconds: Float = 0.030
             rampCoefficient = 1 - exp(-1 / (Float(deviceSampleRate) * rampTimeSeconds))
+        }
+
+        // Update EQ processor sample rate to match new device
+        if let deviceSampleRate = try? aggregateDeviceID.readNominalSampleRate() {
             eqProcessor?.updateSampleRate(deviceSampleRate)
         }
 
@@ -568,9 +570,8 @@ final class ProcessTapController {
             }
         }
 
-        let compensation = destVolume > 0.001 ? sourceVolume / destVolume : 1.0
-        _deviceVolumeCompensation = min(max(compensation, 0.1), 10.0)
-        logger.info("[SWITCH-DESTROY] Volume compensation: \(self._deviceVolumeCompensation) (source=\(sourceVolume), dest=\(destVolume))")
+        // Device volume compensation disabled - causes cumulative attenuation on round-trip switches
+        logger.info("[SWITCH-DESTROY] Device volumes: source=\(sourceVolume), dest=\(destVolume) (no compensation applied)")
 
         _forceSilence = true
         logger.info("[SWITCH-DESTROY] Enabled _forceSilence=true")
@@ -797,7 +798,8 @@ final class ProcessTapController {
             }
 
             // Apply EQ processing (after volume, before output)
-            if let eqProcessor = eqProcessor {
+            // Skip EQ during crossfade - 50ms flat EQ is imperceptible, avoids all EQ state glitches
+            if let eqProcessor = eqProcessor, !_isCrossfading {
                 let frameCount = sampleCount / 2  // Stereo frames
                 eqProcessor.process(
                     input: outputSamples,
@@ -897,8 +899,9 @@ final class ProcessTapController {
                 outputSamples[i] = sample
             }
 
-            // Apply EQ processing (after volume, before output)
-            if let eqProcessor = eqProcessor {
+            // Apply EQ after crossfade completes (when this tap becomes the primary)
+            // Skip during crossfade to prevent glitches from mixing EQ states
+            if let eqProcessor = eqProcessor, !_isCrossfading {
                 let frameCount = sampleCount / 2  // Stereo frames
                 eqProcessor.process(
                     input: outputSamples,

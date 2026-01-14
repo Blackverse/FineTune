@@ -151,6 +151,9 @@ final class AudioEngine {
             Task {
                 do {
                     try await tap.switchDevice(to: deviceUID)
+                    // Restore saved volume/mute state after device switch
+                    tap.volume = self.volumeState.getVolume(for: app.id)
+                    tap.isMuted = self.volumeState.getMute(for: app.id)
                     // Update device volume/mute for VU meter after switch
                     if let device = self.deviceMonitor.device(for: deviceUID) {
                         tap.currentDeviceVolume = self.deviceVolumeMonitor.volumes[device.id] ?? 1.0
@@ -281,6 +284,9 @@ final class AudioEngine {
                 for tap in tapsToSwitch {
                     do {
                         try await tap.switchDevice(to: fallbackDevice.uid)
+                        // Restore saved volume/mute state after device switch
+                        tap.volume = self.volumeState.getVolume(for: tap.app.id)
+                        tap.isMuted = self.volumeState.getMute(for: tap.app.id)
                     } catch {
                         logger.error("Failed to switch device for \(tap.app.name): \(error.localizedDescription)")
                     }
