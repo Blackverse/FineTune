@@ -6,12 +6,14 @@ struct EQPresetPicker: View {
     let onPresetSelected: (EQPreset) -> Void
 
     var body: some View {
-        DropdownMenu(
-            items: Array(EQPreset.allCases),
+        GroupedDropdownMenu(
+            sections: Array(EQPreset.Category.allCases),
+            itemsForSection: { EQPreset.presets(for: $0) },
+            sectionTitle: { $0.rawValue },
             selectedItem: selectedPreset,
-            maxVisibleItems: 8,
+            maxHeight: 280,
             width: 100,
-            popoverWidth: 140,
+            popoverWidth: 150,
             onSelect: onPresetSelected
         ) { selected in
             Text(selected?.name ?? "Custom")
@@ -21,10 +23,20 @@ struct EQPresetPicker: View {
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.accentColor)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
                 }
             }
         }
     }
+}
+
+#Preview {
+    VStack(spacing: 20) {
+        EQPresetPicker(selectedPreset: .rock) { _ in }
+        EQPresetPicker(selectedPreset: nil) { _ in }
+        EQPresetPicker(selectedPreset: .vocalClarity) { _ in }
+    }
+    .padding()
+    .background(Color.black)
 }

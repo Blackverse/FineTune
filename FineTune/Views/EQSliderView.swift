@@ -8,13 +8,19 @@ struct EQSliderView: View {
 
     // Local state for smooth visual updates
     @State private var localGain: Float = 0
+    @State private var isDragging: Bool = false
 
-    private let trackWidth: CGFloat = 4
-    private let thumbSize: CGFloat = 14
-    private let tickCount = 5  // Number of tick marks (fewer = cleaner)
+    // Use design tokens for slider style variant support
+    private var trackWidth: CGFloat { DesignTokens.Dimensions.sliderTrackHeight }
+    private var thumbSize: CGFloat { DesignTokens.Dimensions.sliderThumbSize }
+    private let tickCount = 5  // Number of tick marks
     private let tickWidth: CGFloat = 3
-    private let tickGap: CGFloat = 3  // Gap between tick and track
-    private let verticalPadding: CGFloat = 8  // Margin at top/bottom for thumb travel
+    private let tickGap: CGFloat = 3
+    private let verticalPadding: CGFloat = 8
+
+    private func formatGain(_ gain: Float) -> String {
+        gain >= 0 ? String(format: "+%.0fdB", gain) : String(format: "%.0fdB", gain)
+    }
 
     var body: some View {
         VStack(spacing: 4) {
@@ -29,6 +35,7 @@ struct EQSliderView: View {
                     .gesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { value in
+                                isDragging = true
                                 // Map touch to padded range
                                 let normalizedY = (value.location.y - verticalPadding) / travelHeight
                                 let normalized = 1 - normalizedY
@@ -36,6 +43,9 @@ struct EQSliderView: View {
                                 let newGain = Float(clamped) * (range.upperBound - range.lowerBound) + range.lowerBound
                                 localGain = newGain
                                 gain = newGain
+                            }
+                            .onEnded { _ in
+                                isDragging = false
                             }
                     )
                     .overlay {
@@ -46,7 +56,7 @@ struct EQSliderView: View {
                                 ForEach(0..<tickCount, id: \.self) { index in
                                     if index > 0 { Spacer() }
                                     Rectangle()
-                                        .fill(Color.secondary.opacity(0.25))
+                                        .fill(DesignTokens.Colors.textTertiary.opacity(0.4))
                                         .frame(width: tickWidth, height: 1)
                                 }
                             }
@@ -58,7 +68,7 @@ struct EQSliderView: View {
                                 ForEach(0..<tickCount, id: \.self) { index in
                                     if index > 0 { Spacer() }
                                     Rectangle()
-                                        .fill(Color.secondary.opacity(0.25))
+                                        .fill(DesignTokens.Colors.textTertiary.opacity(0.4))
                                         .frame(width: tickWidth, height: 1)
                                 }
                             }
@@ -67,33 +77,47 @@ struct EQSliderView: View {
 
                             // Track (full height)
                             RoundedRectangle(cornerRadius: 2)
-                                .fill(Color.secondary.opacity(0.3))
+                                .fill(DesignTokens.Colors.sliderTrack)
                                 .frame(width: trackWidth)
 
                             // Center line (0 dB marker) - spans across ticks
                             Rectangle()
-                                .fill(Color.secondary.opacity(0.4))
-                                .frame(width: trackWidth + (tickGap + tickWidth) * 2, height: 1)
+                                .fill(DesignTokens.Colors.unityMarker)
+                                .frame(width: trackWidth + (tickGap + tickWidth) * 2, height: 1.5)
 
-                            // Thumb
+                            // Knob-style thumb (themed background with center dot)
                             ZStack {
                                 Circle()
-                                    .fill(Color.white)
-                                    .frame(width: thumbSize, height: thumbSize)
+                                    .fill(DesignTokens.Colors.thumbBackground)
                                 Circle()
-                                    .fill(Color(white: 0.15))
-                                    .frame(width: 5, height: 5)
+                                    .fill(DesignTokens.Colors.thumbDot)
+                                    .frame(width: thumbSize * 0.35, height: thumbSize * 0.35)
                             }
-                            .shadow(color: .black.opacity(0.5), radius: 2, y: 1)
+                            .frame(width: thumbSize, height: thumbSize)
+                            .shadow(color: .black.opacity(0.4), radius: 2, y: 1)
                             .position(x: geo.size.width / 2, y: thumbY)
+
+                            // dB value label (appears during drag)
+                            if isDragging {
+                                Text(formatGain(localGain))
+                                    .font(.system(size: 9, weight: .medium).monospacedDigit())
+                                    .foregroundStyle(DesignTokens.Colors.textPrimary)
+                                    .fixedSize()
+                                    .position(x: geo.size.width / 2, y: thumbY - thumbSize / 2 - 10)
+                            }
                         }
                         .allowsHitTesting(false)
                     }
             }
 
-            Text(frequency)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(.secondary)
+            VStack(spacing: 0) {
+                Text(frequency)
+                    .font(DesignTokens.Typography.eqLabel)
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                Text("Hz")
+                    .font(DesignTokens.Typography.caption)
+                    .foregroundStyle(DesignTokens.Colors.textTertiary)
+            }
         }
         .onAppear {
             localGain = gain  // Initialize from binding
@@ -106,11 +130,12 @@ struct EQSliderView: View {
 
 #Preview {
     HStack(spacing: 8) {
-        EQSliderView(frequency: "31", gain: .constant(6))
+        EQSliderView(frequency: "32", gain: .constant(6))
         EQSliderView(frequency: "1k", gain: .constant(0))
         EQSliderView(frequency: "16k", gain: .constant(-6))
     }
     .frame(width: 120, height: 120)
     .padding()
-    .background(Color.black)
+    .darkGlassBackground()
+    .environment(\.colorScheme, .dark)
 }

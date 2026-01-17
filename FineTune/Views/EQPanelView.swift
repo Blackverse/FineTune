@@ -6,7 +6,7 @@ struct EQPanelView: View {
     let onPresetSelected: (EQPreset) -> Void
     let onSettingsChanged: (EQSettings) -> Void
 
-    private let frequencyLabels = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
+    private let frequencyLabels = ["32", "64", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"]
 
     private var currentPreset: EQPreset? {
         EQPreset.allCases.first { preset in
@@ -15,21 +15,22 @@ struct EQPanelView: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
+        // Entire EQ panel content inside recessed background
+        VStack(spacing: 12) {
             // Header: Toggle left, Preset right
             HStack {
                 // EQ toggle on left
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
                     Toggle("", isOn: $settings.isEnabled)
                         .toggleStyle(.switch)
-                        .scaleEffect(0.65)
+                        .scaleEffect(0.7)
                         .labelsHidden()
                         .onChange(of: settings.isEnabled) { _, _ in
                             onSettingsChanged(settings)
                         }
                     Text("EQ")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .font(DesignTokens.Typography.pickerText)
+                        .foregroundColor(.primary)
                 }
 
                 Spacer()
@@ -48,7 +49,7 @@ struct EQPanelView: View {
             }
             .zIndex(1)  // Ensure dropdown renders above sliders
 
-            // 10-band sliders - taller with more spacing
+            // 10-band sliders
             HStack(spacing: 22) {
                 ForEach(0..<10, id: \.self) { index in
                     EQSliderView(
@@ -67,20 +68,32 @@ struct EQPanelView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.5))
-        )
+        .background {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(DesignTokens.Colors.recessedBackground)
+        }
+        .padding(.horizontal, 2)
+        .padding(.vertical, 4)
+        // No outer background - parent ExpandableGlassRow provides the glass container
     }
 }
 
 #Preview {
-    EQPanelView(
-        settings: .constant(EQSettings()),
-        onPresetSelected: { _ in },
-        onSettingsChanged: { _ in }
-    )
-    .frame(width: 320)
+    // Simulating how it appears inside ExpandableGlassRow
+    VStack {
+        EQPanelView(
+            settings: .constant(EQSettings()),
+            onPresetSelected: { _ in },
+            onSettingsChanged: { _ in }
+        )
+    }
+    .padding(.horizontal, DesignTokens.Spacing.sm)
+    .padding(.vertical, DesignTokens.Spacing.xs)
+    .background {
+        RoundedRectangle(cornerRadius: DesignTokens.Dimensions.rowRadius)
+            .fill(DesignTokens.Colors.recessedBackground)
+    }
+    .frame(width: 550)
     .padding()
     .background(Color.black)
 }
