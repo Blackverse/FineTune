@@ -2,6 +2,9 @@
 import SwiftUI
 import UserNotifications
 import FluidMenuBarExtra
+import os
+
+private let logger = Logger(subsystem: "com.finetuneapp.FineTune", category: "App")
 
 @main
 struct FineTuneApp: App {
@@ -30,7 +33,7 @@ struct FineTuneApp: App {
         // Request notification authorization (for device disconnect alerts)
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { granted, error in
             if let error {
-                print("Notification authorization error: \(error.localizedDescription)")
+                logger.error("Notification authorization error: \(error.localizedDescription)")
             }
             // If not granted, notifications will silently not appear - acceptable behavior
         }
