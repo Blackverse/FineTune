@@ -44,9 +44,7 @@ struct FineTuneApp: App {
             object: nil,
             queue: .main
         ) { [settings] _ in
-            MainActor.assumeIsolated {
-                settings.flushSync()
-            }
+            settings.flushSync()
         }
     }
 }

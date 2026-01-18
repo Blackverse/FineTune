@@ -283,7 +283,7 @@ final class ProcessTapController {
         var sourceVolume: Float = 1.0
         var sourceSampleRate: Float64 = 0
         if let sourceUID = currentDeviceUID {
-            if let sourceDevice = await deviceMonitor?.device(for: sourceUID) {
+            if let sourceDevice = deviceMonitor?.device(for: sourceUID) {
                 // Cache hit - use O(1) lookup
                 sourceVolume = sourceDevice.id.readOutputVolumeScalar()
                 sourceSampleRate = (try? sourceDevice.id.readNominalSampleRate()) ?? 0
@@ -305,7 +305,7 @@ final class ProcessTapController {
         var destSampleRate: Float64 = 0
         var isBluetoothDestination = false
 
-        if let destDevice = await deviceMonitor?.device(for: newOutputUID) {
+        if let destDevice = deviceMonitor?.device(for: newOutputUID) {
             // Cache hit - use O(1) lookup
             destVolume = destDevice.id.readOutputVolumeScalar()
             destSampleRate = (try? destDevice.id.readNominalSampleRate()) ?? 0
@@ -554,8 +554,8 @@ final class ProcessTapController {
 
         if let sourceUID = currentDeviceUID {
             if let monitor = deviceMonitor {
-                cachedSource = await monitor.device(for: sourceUID)
-                cachedDest = await monitor.device(for: newOutputUID)
+                cachedSource = monitor.device(for: sourceUID)
+                cachedDest = monitor.device(for: newOutputUID)
             }
 
             // Use cached values if available
